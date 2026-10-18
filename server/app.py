@@ -152,14 +152,27 @@ def gather_endpoint(body: dict):
 
     This is Phase 1. Nothing gets built. The user reviews the gathered data,
     then proceeds to spec/build with verified dimensions.
+
+    Accepts either a hardware name (searches for datasheets) or a direct
+    URL to a datasheet PDF (downloads and parses it immediately).
     """
     import shutil
     import tempfile
-    from grounding.gather import gather
+    from grounding.gather import gather, gather_from_url
 
     query = (body.get("query") or "").strip()
     if not query:
         return {"error": "empty query"}
+
+    # Direct URL? Download and parse it — skip the search entirely.
+    if query.startswith("http"):
+        try:
+            data = gather_from_url(query)
+            return {"data": data.to_dict()}
+        except Exception as e:
+            return {"data": {"query": query, "hardware": "", "dimensions": [],
+                            "diagrams": [], "sources": [],
+                            "notes": [f"URL fetch failed: {e}"]}}
 
     tmpdir = Path(tempfile.mkdtemp(prefix="gather_"))
     try:

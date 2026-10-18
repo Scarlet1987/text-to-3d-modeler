@@ -35,6 +35,81 @@ class GatheredData:
         }
 
 
+def gather_from_url(url: str) -> GatheredData:
+    """Gather data directly from a datasheet URL.
+
+    Downloads the PDF, extracts text, pulls every dimension.
+    No search, no guessing — straight from the manufacturer's document.
+    """
+    import re
+    import tempfile
+    from pathlib import Path as P
+
+    import requests
+
+    data = GatheredData(query=url)
+    data.sources.append(url)
+
+    # Download.
+    resp = requests.get(url, timeout=60,
+                        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"})
+    resp.raise_for_status()
+
+    tmp = P(tempfile.mkdtemp(prefix="datasheet_"))
+    pdf_path = tmp / "datasheet.pdf"
+    pdf_path.write_bytes(resp.content)
+
+    try:
+        # Try PyMuPDF for text extraction.
+        try:
+            import pymupdf
+            doc = pymupdf.open(str(pdf_path))
+        except ImportError:
+            import fitz
+            doc = fitz.open(str(pdf_path))
+
+        full_text = ""
+        for page in doc:
+            text = page.get_text()
+            full_text += text + "\n"
+            # Look for mechanical/dimension sections.
+            if "mechanical" in text.lower():
+                data.notes.append(f"found mechanical section ({len(text)} chars)")
+
+        # Extract all millimeter dimensions.
+        seen = set()
+        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*mm\b", full_text):
+            dim = m.group(0).strip()
+            # Get surrounding context for labeling.
+            start = max(0, m.start() - 60)
+            ctx = full_text[start:m.end() + 20].replace("\n", " ").strip()
+            key = dim.lower()
+            if key not in seen:
+                seen.add(key)
+                data.dimensions.append(f"{dim} — {ctx[:80]}")
+
+        # Also catch "55 x 40" style patterns.
+        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:mm)?", full_text):
+            dim = f"{m.group(1)}x{m.group(2)}mm"
+            if dim.lower() not in seen:
+                seen.add(dim.lower())
+                data.dimensions.append(dim)
+
+        data.notes.append(f"extracted from {len(doc)}-page PDF")
+        doc.close()
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Detect hardware from URL or content.
+    if "cm5" in url.lower():
+        data.hardware = "raspberry pi cm5"
+    elif "cm4" in url.lower():
+        data.hardware = "raspberry pi cm4"
+
+    return data
+
+
 def gather(query: str, workdir: Path | None = None) -> GatheredData:
     """Gather all available data for a part or hardware.
 
