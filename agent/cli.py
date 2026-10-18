@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.phase0 import Phase0Loop
+from agent.storage import new_project
 from gates.resources import Budget, preflight
 
 
@@ -43,8 +44,11 @@ def main(argv: list[str]) -> int:
         return 1
     print(f"preflight ok: {pf.resources.ram_mb:.0f}MB RAM, {pf.resources.disk_free_mb:.0f}MB disk free")
 
-    workdir = Path(tempfile.mkdtemp(prefix="t23d-"))
+    # Personal project dir — your work lives here, separate from references.
+    proj = new_project(prompt)
+    workdir = proj.dir
     loop = Phase0Loop(generate_fn=_stub_generate)
+    print(f"project: {proj.dir}")
     print(f"prompt: {prompt}")
     print("grounding + generating...")
     try:
@@ -55,9 +59,14 @@ def main(argv: list[str]) -> int:
 
     if result.ok:
         stl = workdir / "part.stl"
+        proj.attempts = result.attempts
+        proj.save_outputs(result.step_path, stl, result.script,
+                          "\n\n".join(result.errors))
+        proj.save_prompt()  # update meta with attempt count
         print(f"DONE in {result.attempts} attempt(s)")
-        print(f"  STEP: {result.step_path}")
-        print(f"  STL:  {stl if stl.exists() else 'missing'}")
+        print(f"  project: {proj.dir}")
+        print(f"  STEP: {proj.dir / 'part.step'}")
+        print(f"  STL:  {proj.dir / 'part.stl'}")
         return 0
     print(f"FAILED after {result.attempts} attempt(s):")
     for e in result.errors[-3:]:

@@ -20,3 +20,9 @@ models/
 .DS_Store
 .idea/
 .vscode/
+
+# Personal projects and cached references stay local — never committed.
+# projects/ = the user's own work (prompts, parts, outputs)
+# references/ = manufacturer diagrams and grounded reference data
+projects/
+references/
