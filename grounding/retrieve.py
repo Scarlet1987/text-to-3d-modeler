@@ -47,13 +47,28 @@ class GroundingResult:
 
 
 def _search(query: str, max_results: int = 8) -> list[dict]:
-    resp = requests.post(
-        SEARCH_URL,
-        data={"q": query},
-        headers=HEADERS,
-        timeout=30,
-    )
-    resp.raise_for_status()
+    import time
+    last_error = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                SEARCH_URL,
+                data={"q": query},
+                headers=HEADERS,
+                timeout=30,
+            )
+            # 202 or CAPTCHA page = blocked, not empty results.
+            if resp.status_code == 202 or "captcha" in resp.text.lower()[:2000]:
+                last_error = "search engine blocked the request (rate limit)"
+                time.sleep(5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            break
+        except requests.RequestException as e:
+            last_error = str(e)
+            time.sleep(3 * (attempt + 1))
+    else:
+        raise RuntimeError(f"web search failed after 3 attempts: {last_error}")
     results = []
     links = re.findall(r'result__a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', resp.text, re.DOTALL)
     snippets = re.findall(r'result__snippet[^>]*>(.*?)</a>', resp.text, re.DOTALL)

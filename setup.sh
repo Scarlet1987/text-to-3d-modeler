@@ -11,7 +11,7 @@ echo "=== Virtual environment ==="
 .venv/bin/pip install -q --upgrade pip
 
 echo "=== Dependencies (this takes a few minutes) ==="
-.venv/bin/pip install -q cadquery fastapi uvicorn requests
+.venv/bin/pip install -q cadquery fastapi uvicorn requests pymupdf
 
 echo "=== LLM backend (compiles — grab a coffee) ==="
 .venv/bin/pip install -q llama-cpp-python
