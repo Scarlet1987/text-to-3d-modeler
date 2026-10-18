@@ -127,11 +127,24 @@ def _extract_ref_dimensions(data: dict, result: GroundingResult, source: str) ->
 
 
 def ground_part(part_description: str) -> GroundingResult:
-    """Ground a part: local references first, then web search.
+    """Ground a part: known boards first, local references, then web search.
 
-    Local reference files (references/*.json) are checked first — they're
-    confirmed measurements, not search results. Web grounding fills the gaps.
+    Priority order:
+    1. Known boards database — exact datasheet dimensions, zero search.
+    2. Local reference files (references/*.json) — confirmed measurements.
+    3. Web search — fills the gaps.
     """
+    # Known board? Exact numbers, no search needed.
+    from grounding.known_boards import match_known_board
+    known = match_known_board(part_description)
+    if known and known.dimensions:
+        # Still check local refs for project-specific additions.
+        local = _load_local_references(part_description)
+        known.dimensions.extend(d for d in local.dimensions if d not in known.dimensions)
+        known.snippets.extend(local.snippets)
+        known.sources.extend(local.sources)
+        return known
+
     # Local truth first.
     combined = _load_local_references(part_description)
 
