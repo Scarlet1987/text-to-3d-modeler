@@ -10,8 +10,11 @@ and streams progress to the UI over SSE.
 from __future__ import annotations
 
 import json
+import os
 import queue
+import subprocess
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -90,6 +93,22 @@ def _run_loop(prompt: str) -> None:
     except Exception as e:
         _state["status"] = "failed"
         _emit("failed", {"errors": [str(e)]})
+
+
+@app.post("/api/update")
+def update_server():
+    """Pull latest code and restart. The run.sh wrapper handles the restart."""
+    def do_update():
+        time.sleep(0.5)  # let the response go back first
+        try:
+            subprocess.run(["git", "pull"], cwd=REPO_ROOT, capture_output=True, timeout=60)
+        except Exception:
+            pass
+        # Exit 42 tells run.sh to restart us with the new code.
+        os._exit(42)
+    t = threading.Thread(target=do_update, daemon=True)
+    t.start()
+    return {"updating": True}
 
 
 @app.get("/api/events")

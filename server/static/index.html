@@ -8,9 +8,13 @@
   :root { --bg: #0f1a1a; --panel: #162626; --teal: #2dd4bf; --text: #e8f4f4; --dim: #8aa5a5; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
-  header { padding: 1.2rem 2rem; border-bottom: 1px solid #1e3333; }
+  header { padding: 1.2rem 2rem; border-bottom: 1px solid #1e3333; display: flex; justify-content: space-between; align-items: center; }
   header h1 { font-size: 1.3rem; font-weight: 600; }
   header h1 span { color: var(--teal); }
+  #update-btn { background: #0c1414; color: var(--dim); border: 1px solid #2a4444; border-radius: 8px;
+                padding: 0.5rem 1rem; font-size: 0.85rem; cursor: pointer; }
+  #update-btn:hover { color: var(--teal); border-color: var(--teal); }
+  #update-btn:disabled { opacity: 0.5; cursor: default; }
   main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem 2rem; max-width: 1400px; margin: 0 auto; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .card { background: var(--panel); border-radius: 12px; padding: 1.2rem; }
@@ -44,7 +48,7 @@
 </style>
 </head>
 <body>
-<header><h1>Text-to-3D <span>Modeler</span></h1></header>
+<header><h1>Text-to-3D <span>Modeler</span></h1><button id="update-btn" title="Pull latest code and restart">↻ Update</button></header>
 <main>
   <div>
     <div class="card">
@@ -120,6 +124,7 @@ es.addEventListener("failed", e => {
 
 $("go").onclick = async () => {
   const prompt = $("prompt").value.trim();
+  if (!prompt) return;
   if (!prompt) return;
   $("go").disabled = true; $("log").textContent = ""; setStages("preflight");
   $("downloads").style.display = "none";
@@ -210,6 +215,25 @@ async function refreshRuns() {
   }
 }
 initViewer(); refreshRuns(); setStages(null);
+
+$("update-btn").onclick = async () => {
+  const btn = $("update-btn");
+  btn.disabled = true; btn.textContent = "↻ Updating…";
+  try {
+    await fetch("/api/update", { method: "POST" });
+  } catch (e) { /* server is restarting, connection drops — expected */ }
+  log("update pulled — server restarting, refresh in a few seconds");
+  // Poll until the server is back, then reload.
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const r = await fetch("/api/status");
+      if (r.ok) { location.reload(); return; }
+    } catch (e) { /* not back yet */ }
+  }
+  btn.disabled = false; btn.textContent = "↻ Update";
+  log("server didn't come back — check the terminal");
+};
 </script>
 </body>
 </html>
