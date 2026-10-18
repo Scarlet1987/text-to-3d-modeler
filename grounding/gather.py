@@ -63,6 +63,8 @@ def _try_manufacturer_urls(hardware: str) -> GatheredData | None:
         ],
     }
     hw = hardware.lower()
+    # Normalize common typos before matching.
+    hw = hw.replace("rasberry", "raspberry").replace("raspbery", "raspberry")
     for brand, urls in patterns.items():
         if brand in hw:
             model = hw.replace(brand, "").strip().replace(" ", "-")
