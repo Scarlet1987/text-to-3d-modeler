@@ -42,25 +42,31 @@ Rules:
 
 
 def run_cadquery_script(script: str, workdir: Path) -> tuple[bool, str, Path | None]:
-    """Run a CadQuery script headlessly. Returns (ok, log, step_path)."""
+    """Run a CadQuery script headlessly. Returns (ok, log, step_path).
+
+    Exports STEP (CAD) and STL (3D printing) — the STEP is the master,
+    the STL is what the printer wants.
+    """
     script_path = workdir / "gen.py"
     step_path = workdir / "part.step"
+    stl_path = workdir / "part.stl"
     runner = (
         "import runpy, cadquery as cq, sys\n"
         "ns = runpy.run_path(sys.argv[1])\n"
         "result = ns.get('result')\n"
         "assert result is not None, 'script must define `result`'\n"
         "cq.exporters.export(result, sys.argv[2])\n"
+        "cq.exporters.export(result, sys.argv[3])\n"
     )
     runner_path = workdir / "_runner.py"
     runner_path.write_text(runner)
     script_path.write_text(script)
     proc = subprocess.run(
-        [sys.executable, str(runner_path), str(script_path), str(step_path)],
+        [sys.executable, str(runner_path), str(script_path), str(step_path), str(stl_path)],
         capture_output=True, text=True, timeout=300,
     )
     log = proc.stdout + proc.stderr
-    ok = proc.returncode == 0 and step_path.exists()
+    ok = proc.returncode == 0 and step_path.exists() and stl_path.exists()
     return ok, log, step_path if ok else None
 
 
