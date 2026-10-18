@@ -65,14 +65,21 @@ def _try_manufacturer_urls(hardware: str) -> GatheredData | None:
     hw = hardware.lower()
     for brand, urls in patterns.items():
         if brand in hw:
-            # Extract model: "raspberry pi cm5" -> "cm5"
             model = hw.replace(brand, "").strip().replace(" ", "-")
+            tried = []
             for template in urls:
                 url = template.format(model=model)
+                tried.append(url)
                 try:
-                    return gather_from_url(url)
+                    result = gather_from_url(url)
+                    if result.dimensions:
+                        return result
                 except Exception:
                     continue
+            # None of the URLs worked — report what was tried.
+            data = GatheredData(query=hardware)
+            data.notes.append(f"tried manufacturer URLs: {', '.join(tried[:2])} — none returned data")
+            return data
     return None
 
 
@@ -166,15 +173,17 @@ def gather(query: str, workdir: Path | None = None) -> GatheredData:
     # If we know the hardware, go straight to the source.
     if data.hardware:
         mfr_data = _try_manufacturer_urls(data.hardware)
-        if mfr_data and (mfr_data.dimensions or mfr_data.diagrams):
-            for d in mfr_data.dimensions:
-                if d not in data.dimensions:
-                    data.dimensions.append(d)
-            for s in mfr_data.sources:
-                if s not in data.sources:
-                    data.sources.append(s)
+        if mfr_data:
+            # Always merge notes so the user sees what was tried.
             data.notes.extend(mfr_data.notes)
-            data.diagrams.extend(mfr_data.diagrams)
+            if mfr_data.dimensions or mfr_data.diagrams:
+                for d in mfr_data.dimensions:
+                    if d not in data.dimensions:
+                        data.dimensions.append(d)
+                for s in mfr_data.sources:
+                    if s not in data.sources:
+                        data.sources.append(s)
+                data.diagrams.extend(mfr_data.diagrams)
             # Got manufacturer data — web search is now just a supplement.
     search_terms = data.hardware if data.hardware else query
     search_ok = bool(data.dimensions)
