@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text-to-3D Modeler</title>
+<style>
+  :root { --bg: #0f1a1a; --panel: #162626; --teal: #2dd4bf; --text: #e8f4f4; --dim: #8aa5a5; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
+  header { padding: 1.2rem 2rem; border-bottom: 1px solid #1e3333; }
+  header h1 { font-size: 1.3rem; font-weight: 600; }
+  header h1 span { color: var(--teal); }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem 2rem; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border-radius: 12px; padding: 1.2rem; }
+  .card h2 { font-size: 0.95rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.8rem; }
+  #prompt { width: 100%; background: #0c1414; border: 1px solid #2a4444; color: var(--text);
+            border-radius: 8px; padding: 0.8rem; font-size: 1rem; resize: vertical; min-height: 80px; }
+  #prompt:focus { outline: none; border-color: var(--teal); }
+  #go { margin-top: 0.8rem; background: var(--teal); color: #062a28; border: none; border-radius: 8px;
+        padding: 0.7rem 1.6rem; font-size: 1rem; font-weight: 600; cursor: pointer; width: 100%; }
+  #go:disabled { opacity: 0.4; cursor: default; }
+  #stages { list-style: none; margin-top: 1rem; }
+  #stages li { padding: 0.5rem 0.7rem; border-radius: 6px; margin-bottom: 0.3rem;
+               background: #0c1414; color: var(--dim); font-size: 0.9rem; }
+  #stages li.active { color: var(--teal); border-left: 3px solid var(--teal); }
+  #stages li.done { color: var(--text); }
+  #viewer { width: 100%; height: 380px; background: #0c1414; border-radius: 8px; position: relative; overflow: hidden; }
+  #viewer canvas { width: 100%; height: 100%; display: block; }
+  #viewer .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                   color: var(--dim); font-size: 0.95rem; }
+  .downloads { margin-top: 0.8rem; display: flex; gap: 0.6rem; }
+  .downloads a { flex: 1; text-align: center; background: #0c1414; color: var(--teal); text-decoration: none;
+                 padding: 0.6rem; border-radius: 8px; border: 1px solid #2a4444; font-size: 0.9rem; }
+  .downloads a:hover { border-color: var(--teal); }
+  #runs { list-style: none; }
+  #runs li { padding: 0.6rem 0.7rem; background: #0c1414; border-radius: 6px; margin-bottom: 0.4rem;
+             font-size: 0.9rem; cursor: pointer; }
+  #runs li:hover { border: 1px solid var(--teal); }
+  #runs li .meta { color: var(--dim); font-size: 0.8rem; }
+  #log { font-family: monospace; font-size: 0.8rem; color: var(--dim); max-height: 200px;
+         overflow-y: auto; background: #0c1414; border-radius: 8px; padding: 0.7rem; margin-top: 1rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header><h1>Text-to-3D <span>Modeler</span></h1></header>
+<main>
+  <div>
+    <div class="card">
+      <h2>Describe your part</h2>
+      <textarea id="prompt" placeholder="make a 40x20x5mm bracket with a 6mm hole"></textarea>
+      <button id="go">Build it</button>
+      <ul id="stages"></ul>
+      <div id="log"></div>
+    </div>
+    <div class="card" style="margin-top:1.5rem">
+      <h2>Completed runs</h2>
+      <ul id="runs"><li style="cursor:default;color:var(--dim)">loading…</li></ul>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Preview</h2>
+      <div id="viewer"><div class="empty">your model appears here</div></div>
+      <div class="downloads" id="downloads" style="display:none">
+        <a id="dl-stl" href="#">Download STL</a>
+        <a id="dl-step" href="#">Download STEP</a>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const STAGE_LABELS = { preflight: "Preflight — checking resources", ground: "Grounding — researching dimensions",
+  generate: "Generating — writing CAD script", measure: "Checking measurements",
+  build: "Building — running CadQuery", verify: "Verifying geometry", done: "Done" };
+
+function setStages(active) {
+  const ul = $("stages"); ul.innerHTML = "";
+  const order = ["preflight","ground","generate","measure","build","verify"];
+  let past = true;
+  for (const s of order) {
+    const li = document.createElement("li");
+    li.textContent = (s === active ? "▸ " : past ? "✓ " : "· ") + (STAGE_LABELS[s] || s);
+    li.className = s === active ? "active" : past ? "done" : "";
+    if (s === active) past = false;
+    ul.appendChild(li);
+  }
+}
+function log(msg) { const l = $("log"); l.textContent += msg + "\n"; l.scrollTop = l.scrollHeight; }
+
+const es = new EventSource("/api/events");
+es.addEventListener("progress", e => {
+  const d = JSON.parse(e.data);
+  setStages(d.stage);
+  log(`[${d.stage}] ${d.detail || ""}`);
+});
+es.addEventListener("done", e => {
+  const d = JSON.parse(e.data);
+  setStages("done"); log(`done in ${d.attempts} attempt(s)`);
+  $("go").disabled = false;
+  $("dl-stl").href = d.stl; $("dl-step").href = d.step;
+  $("downloads").style.display = "flex";
+  loadSTL(d.stl); refreshRuns();
+});
+es.addEventListener("failed", e => {
+  const d = JSON.parse(e.data);
+  log("FAILED: " + (d.errors || []).join("\n"));
+  $("go").disabled = false;
+});
+
+$("go").onclick = async () => {
+  const prompt = $("prompt").value.trim();
+  if (!prompt) return;
+  $("go").disabled = true; $("log").textContent = ""; setStages("preflight");
+  $("downloads").style.display = "none";
+  document.querySelector("#viewer .empty")?.remove();
+  const r = await fetch("/api/run", { method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({prompt}) });
+  const j = await r.json();
+  if (j.error) { log("error: " + j.error); $("go").disabled = false; }
+};
+
+// --- Three.js STL viewer ---
+let renderer, scene, camera, mesh;
+function initViewer() {
+  const el = $("viewer");
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(el.clientWidth, el.clientHeight);
+  renderer.setClearColor(0x0c1414);
+  el.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.1, 10000);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x223333, 1.2));
+  const dir = new THREE.DirectionalLight(0x2dd4bf, 0.8); dir.position.set(5, 10, 7); scene.add(dir);
+  (function animate() { requestAnimationFrame(animate);
+    if (mesh) mesh.rotation.y += 0.008; renderer.render(scene, camera); })();
+  // drag to rotate
+  let drag = false, px = 0, py = 0, rx = 0.4, ry = 0.6;
+  const c = renderer.domElement;
+  c.addEventListener("pointerdown", e => { drag = true; px = e.clientX; py = e.clientY; });
+  window.addEventListener("pointerup", () => drag = false);
+  window.addEventListener("pointermove", e => { if (!drag || !mesh) return;
+    ry += (e.clientX - px) * 0.01; rx += (e.clientY - py) * 0.01;
+    px = e.clientX; py = e.clientY; mesh.rotation.set(rx, ry, 0); });
+}
+function loadSTL(url) {
+  fetch(url).then(r => r.arrayBuffer()).then(buf => {
+    const geo = parseSTL(buf);
+    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2dd4bf, roughness: 0.4, metalness: 0.3 });
+    mesh = new THREE.Mesh(geo, mat);
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox, size = bb.getSize(new THREE.Vector3());
+    const ctr = bb.getCenter(new THREE.Vector3());
+    mesh.position.sub(ctr);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    camera.position.set(maxDim * 1.2, maxDim * 0.8, maxDim * 1.5);
+    camera.lookAt(0, 0, 0);
+    scene.add(mesh);
+  });
+}
+function parseSTL(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  const pos = new Float32Array(n * 9);
+  let o = 84;
+  for (let i = 0; i < n; i++) {
+    o += 12; // normal
+    for (let v = 0; v < 3; v++) { pos[i*9+v*3] = dv.getFloat32(o, true); pos[i*9+v*3+1] = dv.getFloat32(o+4, true); pos[i*9+v*3+2] = dv.getFloat32(o+8, true); o += 12; }
+    o += 2; // attr
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+async function refreshRuns() {
+  const r = await fetch("/api/runs"); const j = await r.json();
+  const ul = $("runs"); ul.innerHTML = "";
+  if (!j.runs.length) { ul.innerHTML = '<li style="cursor:default;color:var(--dim)">no completed runs yet</li>'; return; }
+  for (const run of j.runs) {
+    const li = document.createElement("li");
+    li.innerHTML = `${run.prompt}<div class="meta">${run.slug} · ${run.attempts} attempt(s)</div>`;
+    li.onclick = () => { loadSTL(run.stl);
+      $("dl-stl").href = run.stl; $("dl-step").href = run.step; $("downloads").style.display = "flex"; };
+    ul.appendChild(li);
+  }
+}
+initViewer(); refreshRuns(); setStages(null);
+</script>
+</body>
+</html>

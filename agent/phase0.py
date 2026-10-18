@@ -78,13 +78,19 @@ class Phase0Loop:
         self.generate_fn = generate_fn
         self.max_attempts = max_attempts
 
-    def run(self, prompt: str, workdir: Path) -> JobResult:
+    def run(self, prompt: str, workdir: Path, on_stage=None) -> JobResult:
+        # on_stage(stage, detail): optional callback for GUI progress.
+        def stage(s: str, d: str = "") -> None:
+            if on_stage:
+                on_stage(s, d)
+
         # Ground first: real measurements before any generation.
         # Text is cheap; diagrams cost download+OCR, so they run only
         # when text comes up short — and only from trusted, relevant sources.
         # Fallback: dimensions in the user's own prompt are ground truth.
         # If nothing grounds the part, refuse — don't guess.
         grounding = ground_part(prompt)
+        stage("ground", f"found {len(grounding.dimensions)} measurements")
         reference_dims = list(grounding.dimensions)
         diagram_keywords: list[str] = []
         for dd in parse_diagrams(prompt, workdir, reference_dims):
@@ -112,9 +118,11 @@ class Phase0Loop:
         script = ""
         previous_script: str | None = None
         for attempt in range(1, self.max_attempts + 1):
+            stage("generate", f"attempt {attempt}/{self.max_attempts}")
             script = self.generate_fn(prompt, SYSTEM_PROMPT, script, "\n".join(errors), context)
 
             # MEASUREMENT GATE: check before running, check before altering.
+            stage("measure", "checking dimensions against references")
             mcheck = check_measurements(script, previous_script, reference_dims)
             if not mcheck.passed:
                 errors.append(
@@ -127,9 +135,11 @@ class Phase0Loop:
                 previous_script = script
                 continue
 
+            stage("build", "running CadQuery")
             ok, log, step_path = run_cadquery_script(script, workdir)
             if ok:
                 # POST-BUILD GATE: measure the actual geometry against reference.
+                stage("verify", "measuring built geometry")
                 v = verify_step(step_path, reference_dims)
                 if not v.passed:
                     errors.append(
