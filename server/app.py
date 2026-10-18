@@ -49,9 +49,9 @@ def _run_loop(prompt: str) -> None:
         _state["status"] = "running"
         _emit("status", {"status": "running"})
 
-        ok, msg = preflight(Budget())
-        if not ok:
-            raise RuntimeError(msg)
+        result = preflight(Budget())
+        if not result.ok:
+            raise RuntimeError("; ".join(result.problems))
         _emit("progress", {"stage": "preflight", "detail": "ok"})
 
         run = new_run(prompt)
