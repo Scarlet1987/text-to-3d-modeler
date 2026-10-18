@@ -61,35 +61,40 @@ class QwenBackend:
 def _strip_code_fences(text: str) -> str:
     """Extract only the Python code, ignoring any conversational chatter.
 
-    The model sometimes thinks out loud before writing code. We find the
-    actual code by looking for the first Python import or code fence.
+    The model sometimes thinks out loud before OR after writing code.
+    We find the actual code block and ignore everything else.
     """
-    # If there's a fenced block, take it.
+    # If there's a fenced block, take the FIRST one (code comes before chatter).
     fence = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
     if fence:
         return fence.group(1).strip()
-    # Otherwise, find the first line that looks like Python code
-    # (import statement or assignment) and take everything from there.
     lines = text.split("\n")
-    start = 0
+    # Find the code block: starts at first import, ends at last code-like line
+    # before trailing chatter begins.
+    start = None
     for i, line in enumerate(lines):
         s = line.strip()
-        if s.startswith("import ") or s.startswith("from ") or s.startswith("result ="):
+        if s.startswith("import ") or s.startswith("from "):
             start = i
             break
-    code = "\n".join(lines[start:]).strip()
-    # Cut off any trailing conversational text after the code ends.
-    # The code should end with the `result` definition; drop lines after
-    # the last line that looks like code.
-    code_lines = code.split("\n")
-    end = len(code_lines)
-    for i in range(len(code_lines) - 1, -1, -1):
-        s = code_lines[i].strip()
-        if s and (s.startswith("result") or s.endswith(")") or s.endswith("]") or
-                  "=" in s or s.startswith("#") or s.startswith(".")):
-            end = i + 1
+    if start is None:
+        return text.strip()
+    # Walk forward from start; stop at the first line that is clearly chatter
+    # (long English sentence without code characters).
+    end = len(lines)
+    for i in range(start, len(lines)):
+        s = lines[i].strip()
+        # Chatter heuristics: long line, mostly words, no code chars.
+        if (len(s) > 80 and " " in s
+                and not any(c in s for c in "()[]{}=<>")
+                and not s.startswith("#") and not s.startswith("import")):
+            end = i
             break
-    return "\n".join(code_lines[:end]).strip()
+    code = "\n".join(lines[start:end]).strip()
+    # Validate it's actually Python — must contain 'result'.
+    if "result" not in code:
+        return text.strip()
+    return code
 
 
 def make_generate_fn(backend: QwenBackend):

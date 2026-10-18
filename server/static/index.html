@@ -176,8 +176,11 @@ function reviewSpec({spec_id, spec}) {
     box.style.display = "block";
     let html = `<h2 style='margin-bottom:0.6rem'>Verify spec — ${spec.part_name || "part"}</h2>`;
     html += `<div style='font-size:0.9rem;margin-bottom:0.8rem'>`;
+    const verifiedCount = spec.dimensions.filter(d => d.verified).length;
     if (!spec.dimensions.length) {
-      html += `<p style='color:#e08080'>No verified dimensions found. The writer will have nothing to work with.</p>`;
+      html += `<p style='color:#e08080;font-weight:600'>⚠ No dimensions found at all. The writer will have nothing to work with. Add measurements to your prompt or answers.</p>`;
+    } else if (verifiedCount < 3) {
+      html += `<p style='color:#e0a080;font-weight:600'>⚠ Only ${verifiedCount} verified dimension${verifiedCount === 1 ? "" : "s"}. This is thin — the part may fail verification. Consider adding more measurements.</p>`;
     } else {
       html += `<table style='width:100%;border-collapse:collapse;font-size:0.85rem'>`;
       html += `<tr style='color:var(--dim);text-align:left'><th style='padding:0.3rem'>Dimension</th><th style='padding:0.3rem'>Value</th><th style='padding:0.3rem'>Source</th></tr>`;
