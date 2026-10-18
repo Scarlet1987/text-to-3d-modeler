@@ -17,6 +17,7 @@ from pathlib import Path
 # Allow running from the repo root: python -m agent.cli "..."
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agent.llm import QwenBackend, make_generate_fn
 from agent.phase0 import Phase0Loop
 from agent.storage import HostFile, new_run
 from gates.resources import Budget, preflight
@@ -27,6 +28,11 @@ def _stub_generate(prompt, system, prior_script, error_log, context):
         "No LLM backend wired yet. "
         "Qwen3 8B is downloading; the generate_fn slot is ready for it."
     )
+
+
+def _real_generate_fn():
+    backend = QwenBackend()
+    return make_generate_fn(backend)
 
 
 def main(argv: list[str]) -> int:
@@ -47,7 +53,13 @@ def main(argv: list[str]) -> int:
     # Run starts in temp. Graduates to completed runs only if all gates pass.
     run = new_run(prompt)
     workdir = run.dir
-    loop = Phase0Loop(generate_fn=_stub_generate)
+    try:
+        generate_fn = _real_generate_fn()
+        print("llm backend: Qwen3 8B wired in")
+    except Exception as e:
+        print(f"llm backend failed ({e}); using stub")
+        generate_fn = _stub_generate
+    loop = Phase0Loop(generate_fn=generate_fn)
     print(f"run: {run.dir} (temp)")
     print(f"prompt: {prompt}")
     print("grounding + generating...")
