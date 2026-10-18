@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Allow running from the repo root: python -m agent.cli "..."
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.phase0 import Phase0Loop
-from agent.storage import new_project
+from agent.storage import HostFile, new_run
 from gates.resources import Budget, preflight
 
 
@@ -44,11 +45,11 @@ def main(argv: list[str]) -> int:
         return 1
     print(f"preflight ok: {pf.resources.ram_mb:.0f}MB RAM, {pf.resources.disk_free_mb:.0f}MB disk free")
 
-    # Personal project dir — your work lives here, separate from references.
-    proj = new_project(prompt)
-    workdir = proj.dir
+    # Run starts in temp. Graduates to completed runs only if all gates pass.
+    run = new_run(prompt)
+    workdir = run.dir
     loop = Phase0Loop(generate_fn=_stub_generate)
-    print(f"project: {proj.dir}")
+    print(f"run: {run.dir} (temp)")
     print(f"prompt: {prompt}")
     print("grounding + generating...")
     try:
@@ -58,15 +59,22 @@ def main(argv: list[str]) -> int:
         return 3
 
     if result.ok:
-        stl = workdir / "part.stl"
-        proj.attempts = result.attempts
-        proj.save_outputs(result.step_path, stl, result.script,
-                          "\n\n".join(result.errors))
-        proj.save_prompt()  # update meta with attempt count
+        stl = run.stl_dir / "part.stl"
+        step = run.step_dir / "part.step"
+        host = HostFile(
+            slug=run.slug, prompt=prompt, attempts=result.attempts,
+            completed=datetime.now(timezone.utc).isoformat(),
+            gates_passed=["measurement", "compile", "verification"],
+        )
+        # Note: loop.run wrote part.step/part.stl into workdir; move them in.
+        run.save_outputs(workdir / "part.step", workdir / "part.stl",
+                         result.script, "\n\n".join(result.errors), host)
+        done = run.graduate()
         print(f"DONE in {result.attempts} attempt(s)")
-        print(f"  project: {proj.dir}")
-        print(f"  STEP: {proj.dir / 'part.step'}")
-        print(f"  STL:  {proj.dir / 'part.stl'}")
+        print(f"  completed: {done.dir}")
+        print(f"  STEP: {done.dir / 'step' / 'part.step'}")
+        print(f"  STL:  {done.dir / 'stl' / 'part.stl'}")
+        print(f"  host: {done.dir / 'host.json'}")
         return 0
     print(f"FAILED after {result.attempts} attempt(s):")
     for e in result.errors[-3:]:

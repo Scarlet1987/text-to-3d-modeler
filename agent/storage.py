@@ -1,26 +1,36 @@
-"""Project storage: personal files and reference files live apart.
+"""Project storage: completed runs vs temp, STL and STEP separated.
 
-projects/<slug>/    YOUR work — prompts, generated scripts, STEP/STL outputs, logs.
-                    Never mixed with reference material. Never committed.
-references/<slug>/  MANUFACTURER diagrams, datasheets, OCR text, grounded
-                    measurements. Cached here so we don't re-download.
-                    Never mixed with your work. Never committed.
+completed runs/
+  <slug>/
+    host.json       <- the host file: manifest tying both sections together
+    stl/
+      part.stl      <- printable output
+    step/
+      part.step     <- CAD master output
+    gen.py          <- the script that made it
+    prompt.txt      <- what was asked for
+    run.log         <- what happened
 
-Nothing gets buried. You always know where your stuff is vs where
-the reference material is.
+completed runs temp/
+  <slug>/
+    ...same layout...  <- work in progress, hasn't passed all gates yet
+
+A run lives in temp until every gate passes. Then it graduates to
+completed runs. Nothing half-finished sits next to finished work.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROJECTS_DIR = REPO_ROOT / "projects"
-REFERENCES_DIR = REPO_ROOT / "references"
+COMPLETED_DIR = REPO_ROOT / "completed runs"
+TEMP_DIR = REPO_ROOT / "completed runs temp"
 
 
 def slugify(text: str) -> str:
@@ -29,65 +39,77 @@ def slugify(text: str) -> str:
 
 
 @dataclass
-class Project:
+class HostFile:
+    """The host file: one manifest for both sections."""
     slug: str
     prompt: str
     created: str = ""
+    completed: str = ""
     attempts: int = 0
+    stl_file: str = "stl/part.stl"
+    step_file: str = "step/part.step"
+    measurements_used: list[str] = field(default_factory=list)
+    gates_passed: list[str] = field(default_factory=list)
 
-    @property
-    def dir(self) -> Path:
-        return PROJECTS_DIR / self.slug
-
-    def save_prompt(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "prompt.txt").write_text(self.prompt)
-        meta = {"slug": self.slug, "prompt": self.prompt,
-                "created": self.created or datetime.now(timezone.utc).isoformat(),
-                "attempts": self.attempts}
-        (self.dir / "meta.json").write_text(json.dumps(meta, indent=2))
-
-    def save_outputs(self, step_path: Path, stl_path: Path, script: str, log: str) -> None:
-        import shutil
-        if step_path and step_path.exists():
-            shutil.copy2(step_path, self.dir / "part.step")
-        if stl_path and stl_path.exists():
-            shutil.copy2(stl_path, self.dir / "part.stl")
-        (self.dir / "gen.py").write_text(script)
-        (self.dir / "run.log").write_text(log)
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 @dataclass
-class ReferenceCache:
+class Run:
     slug: str
-    measurements: list[str] = field(default_factory=list)
-    sources: list[str] = field(default_factory=list)
-    diagram_urls: list[str] = field(default_factory=list)
+    prompt: str
+    temp: bool = True
 
     @property
     def dir(self) -> Path:
-        return REFERENCES_DIR / self.slug
+        base = TEMP_DIR if self.temp else COMPLETED_DIR
+        return base / self.slug
 
-    def save(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "reference.json").write_text(json.dumps(asdict(self), indent=2))
+    @property
+    def stl_dir(self) -> Path:
+        return self.dir / "stl"
 
-    @classmethod
-    def load(cls, slug: str) -> "ReferenceCache | None":
-        p = REFERENCES_DIR / slug / "reference.json"
-        if not p.exists():
-            return None
-        d = json.loads(p.read_text())
-        return cls(**d)
+    @property
+    def step_dir(self) -> Path:
+        return self.dir / "step"
+
+    def setup(self) -> None:
+        self.stl_dir.mkdir(parents=True, exist_ok=True)
+        self.step_dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / "prompt.txt").write_text(self.prompt)
+
+    def save_outputs(self, step_path: Path | None, stl_path: Path | None,
+                     script: str, log: str, host: HostFile) -> None:
+        if step_path and step_path.exists():
+            shutil.copy2(step_path, self.step_dir / "part.step")
+        if stl_path and stl_path.exists():
+            shutil.copy2(stl_path, self.stl_dir / "part.stl")
+        (self.dir / "gen.py").write_text(script)
+        (self.dir / "run.log").write_text(log)
+        (self.dir / "host.json").write_text(json.dumps(host.to_dict(), indent=2))
+
+    def graduate(self) -> "Run":
+        """Move from temp to completed runs. All gates passed."""
+        if not self.temp:
+            return self
+        dest = COMPLETED_DIR / self.slug
+        # Avoid collisions in completed runs.
+        base, n = self.slug, 2
+        while dest.exists():
+            dest = COMPLETED_DIR / f"{base}-{n}"
+            n += 1
+        shutil.move(str(self.dir), str(dest))
+        completed = Run(slug=dest.name, prompt=self.prompt, temp=False)
+        return completed
 
 
-def new_project(prompt: str) -> Project:
+def new_run(prompt: str) -> Run:
     slug = slugify(prompt)
-    # Avoid collisions: bracket-40x20x5, bracket-40x20x5-2, ...
     base, n = slug, 2
-    while (PROJECTS_DIR / slug).exists():
+    while (TEMP_DIR / slug).exists() or (COMPLETED_DIR / slug).exists():
         slug = f"{base}-{n}"
         n += 1
-    proj = Project(slug=slug, prompt=prompt)
-    proj.save_prompt()
-    return proj
+    run = Run(slug=slug, prompt=prompt, temp=True)
+    run.setup()
+    return run

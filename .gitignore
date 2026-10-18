@@ -22,7 +22,11 @@ models/
 .vscode/
 
 # Personal projects and cached references stay local — never committed.
-# projects/ = the user's own work (prompts, parts, outputs)
+
+# Run outputs and reference cache stay local — never committed.
+# "completed runs"/ = finished, verified outputs (stl/ + step/ + host.json)
+# "completed runs temp"/ = work in progress
 # references/ = manufacturer diagrams and grounded reference data
-projects/
+"completed runs"/
+"completed runs temp"/
 references/
