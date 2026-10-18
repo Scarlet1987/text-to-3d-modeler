@@ -80,6 +80,50 @@ def _find_candidates(query: str, max_candidates: int = 6) -> list[str]:
     return found
 
 
+def _extract_keywords(text: str, max_keywords: int = 20) -> list[str]:
+    """Pull domain-relevant keywords/phrases from OCR'd diagram text."""
+    stopwords = {
+        "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
+        "is", "are", "be", "by", "as", "at", "from", "this", "that", "it",
+        "all", "dimensions", "unless", "otherwise", "specified", "tolerance",
+        "drawing", "sheet", "scale", "title", "date", "drawn", "checked",
+    }
+    words = re.findall(r"[A-Za-z][A-Za-z0-9\-/]{2,}", text.lower())
+    freq: dict[str, int] = {}
+    for w in words:
+        if w not in stopwords and not w.isdigit():
+            freq[w] = freq.get(w, 0) + 1
+    # Phrases: consecutive capitalized words in the original text (e.g. "Mounting Hole")
+    phrases = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", text)
+    ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
+    keywords = [w for w, _ in ranked[:max_keywords]]
+    for p in dict.fromkeys(phrases):
+        if p.lower() not in keywords:
+            keywords.append(p)
+        if len(keywords) >= max_keywords + 5:
+            break
+    return keywords
+    """Find candidate diagram/datasheet URLs, ranked by source trust."""
+    found: list[str] = []
+    try:
+        resp = requests.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": f"{query} datasheet OR technical drawing dimensions"},
+            headers=HEADERS, timeout=30,
+        )
+        for m in re.finditer(r'result__a[^>]*href="([^"]+)"', resp.text):
+            url = m.group(1)
+            if url.startswith("http") and url not in found:
+                found.append(url)
+            if len(found) >= max_candidates:
+                break
+    except Exception:
+        pass
+    # Most trusted first.
+    found.sort(key=_source_score, reverse=True)
+    return found
+
+
 def _download(url: str, dest: Path) -> bool:
     try:
         r = requests.get(url, headers=HEADERS, timeout=30)
@@ -150,6 +194,7 @@ def parse_diagrams(
         measurements = list(dict.fromkeys(
             d.strip() for d in DIMENSION_RE.findall(text) if d.strip()
         ))
+        keywords = _extract_keywords(text)
         trusted = _source_score(url) >= 2
-        results.append(DiagramData(url, measurements, [], trusted))
+        results.append(DiagramData(url, measurements, keywords, trusted))
     return results

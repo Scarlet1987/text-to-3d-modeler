@@ -21,7 +21,7 @@ from pathlib import Path
 from gates.measurements import check_measurements
 from gates.verify import verify_step
 from grounding.diagrams import parse_diagrams
-from grounding.retrieve import ground_part
+from grounding.retrieve import DIMENSION_RE, ground_part
 
 
 @dataclass
@@ -83,13 +83,31 @@ class Phase0Loop:
         # Ground first: real measurements before any generation.
         # Text is cheap; diagrams cost download+OCR, so they run only
         # when text comes up short — and only from trusted, relevant sources.
+        # Fallback: dimensions in the user's own prompt are ground truth.
+        # If nothing grounds the part, refuse — don't guess.
         grounding = ground_part(prompt)
         reference_dims = list(grounding.dimensions)
+        diagram_keywords: list[str] = []
         for dd in parse_diagrams(prompt, workdir, reference_dims):
             reference_dims.extend(dd.measurements)
+            diagram_keywords.extend(dd.keywords)
+        # User-stated dimensions are authoritative.
+        prompt_dims = [d.strip() for d in DIMENSION_RE.findall(prompt) if d.strip()]
+        reference_dims.extend(d for d in prompt_dims if d not in reference_dims)
+        if not reference_dims:
+            return JobResult(
+                ok=False, attempts=0,
+                errors=["NO GROUNDING: no measurements found on the web, in diagrams, "
+                        "or in your prompt. I won't guess dimensions. "
+                        "Include measurements in your prompt (e.g. 'make a 40x20x5mm bracket') "
+                        "or name a part with published specs."],
+            )
         context = grounding.prompt_block()
         if reference_dims != grounding.dimensions:
             context += "\nDiagram-sourced dimensions: " + "; ".join(reference_dims)
+        if diagram_keywords:
+            seen = list(dict.fromkeys(diagram_keywords))[:25]
+            context += "\nDomain terms from manufacturer diagrams: " + ", ".join(seen)
 
         errors: list[str] = []
         script = ""
