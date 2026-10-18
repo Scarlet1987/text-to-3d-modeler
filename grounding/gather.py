@@ -43,10 +43,23 @@ def _try_manufacturer_urls(hardware: str) -> GatheredData | None:
     """
     # Manufacturer -> URL pattern templates for datasheets.
     # These are locations, not data. The data comes from the live document.
+    # Add new manufacturers here as they're encountered.
     patterns = {
         "raspberry pi": [
             "https://datasheets.raspberrypi.com/{model}/{model}-datasheet.pdf",
             "https://pip-assets.raspberrypi.com/categories/944-raspberry-pi-compute-module-5/documents/RP-008180-DS-7-cm5-datasheet.pdf",
+        ],
+        "arduino": [
+            "https://docs.arduino.cc/resources/datasheets/{model}-datasheet.pdf",
+        ],
+        "esp32": [
+            "https://www.espressif.com/sites/default/files/documentation/{model}_datasheet_en.pdf",
+        ],
+        "teensy": [
+            "https://www.pjrc.com/teensy/{model}.pdf",
+        ],
+        "jetson": [
+            "https://developer.nvidia.com/downloads/{model}-datasheet",
         ],
     }
     hw = hardware.lower()
