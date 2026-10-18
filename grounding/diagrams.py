@@ -103,25 +103,6 @@ def _extract_keywords(text: str, max_keywords: int = 20) -> list[str]:
         if len(keywords) >= max_keywords + 5:
             break
     return keywords
-    """Find candidate diagram/datasheet URLs, ranked by source trust."""
-    found: list[str] = []
-    try:
-        resp = requests.post(
-            "https://html.duckduckgo.com/html/",
-            data={"q": f"{query} datasheet OR technical drawing dimensions"},
-            headers=HEADERS, timeout=30,
-        )
-        for m in re.finditer(r'result__a[^>]*href="([^"]+)"', resp.text):
-            url = m.group(1)
-            if url.startswith("http") and url not in found:
-                found.append(url)
-            if len(found) >= max_candidates:
-                break
-    except Exception:
-        pass
-    # Most trusted first.
-    found.sort(key=_source_score, reverse=True)
-    return found
 
 
 def _download(url: str, dest: Path) -> bool:

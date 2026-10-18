@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gates.resources import Budget, ModelLifecycle, Resources, preflight
+from gates.resources import Budget, ModelLifecycle, preflight
 
 
 def test_preflight_passes_with_headroom():

@@ -11,7 +11,6 @@ verify -> STEP + STL. Stable, reliable, efficient on local hardware.
 from __future__ import annotations
 
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,8 +58,6 @@ def main(argv: list[str]) -> int:
         return 3
 
     if result.ok:
-        stl = run.stl_dir / "part.stl"
-        step = run.step_dir / "part.step"
         host = HostFile(
             slug=run.slug, prompt=prompt, attempts=result.attempts,
             completed=datetime.now(timezone.utc).isoformat(),
