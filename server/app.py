@@ -95,6 +95,47 @@ def _run_loop(prompt: str) -> None:
         _emit("failed", {"errors": [str(e)]})
 
 
+@app.post("/api/clarify")
+def clarify(body: dict):
+    """Ask the LLM what it needs to know before building.
+
+    Returns 2-4 targeted questions. The user answers, answers get folded
+    into the build prompt. This is the 'filter of questions' — the software
+    asks before it cuts, never guesses.
+    """
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        return {"questions": []}
+    try:
+        from agent.llm import QwenBackend
+        backend = QwenBackend()
+        backend.load()
+        q_prompt = (
+            f"The user wants to 3D model this part: \"{prompt}\"\n\n"
+            "What specific information do you need from the user to model this "
+            "accurately? Think about: exact hardware model numbers, dimensions "
+            "you can't look up, material/thickness choices, mounting details.\n\n"
+            "Return ONLY a JSON list of 2-4 questions, like:\n"
+            '["What is the exact carrier board model?", "What thickness should the base plate be?"]\n'
+            "If you have enough to proceed, return an empty list: []"
+        )
+        raw = backend.generate(
+            "You ask clarifying questions before 3D modeling. Return only JSON.",
+            q_prompt,
+        )
+        backend.unload()
+        # Extract the JSON list.
+        import re
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if m:
+            questions = json.loads(m.group(0))
+            if isinstance(questions, list):
+                return {"questions": [str(q) for q in questions[:4]]}
+    except Exception as e:
+        print(f"clarify failed: {e}")
+    return {"questions": []}
+
+
 @app.post("/api/update")
 def update_server():
     """Pull latest code and restart. The run.sh wrapper handles the restart."""

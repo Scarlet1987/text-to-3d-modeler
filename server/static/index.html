@@ -55,6 +55,7 @@
       <h2>Describe your part</h2>
       <textarea id="prompt" placeholder="make a 40x20x5mm bracket with a 6mm hole"></textarea>
       <button id="go">Build it</button>
+      <div id="questions" style="display:none;margin-top:1rem"></div>
       <ul id="stages"></ul>
       <div id="log"></div>
     </div>
@@ -125,15 +126,62 @@ es.addEventListener("failed", e => {
 $("go").onclick = async () => {
   const prompt = $("prompt").value.trim();
   if (!prompt) return;
-  if (!prompt) return;
   $("go").disabled = true; $("log").textContent = ""; setStages("preflight");
-  $("downloads").style.display = "none";
+  $("downloads").style.display = "none"; $("measured").style.display = "none";
   document.querySelector("#viewer .empty")?.remove();
+
+  // Filter of questions: ask what the model needs before cutting.
+  log("asking what I need to know…");
+  try {
+    const cq = await fetch("/api/clarify", { method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({prompt}) });
+    const { questions } = await cq.json();
+    if (questions && questions.length) {
+      const answers = await askQuestions(questions);
+      if (answers === null) { $("go").disabled = false; log("cancelled"); return; }
+      const enriched = prompt + "\n\nUser answers:\n" + answers.map((a, i) => `Q: ${questions[i]}\nA: ${a}`).join("\n");
+      log(`got ${answers.length} answer(s), building…`);
+      startBuild(enriched);
+      return;
+    }
+  } catch (e) { log("clarify skipped: " + e.message); }
+  startBuild(prompt);
+};
+
+function askQuestions(questions) {
+  return new Promise(resolve => {
+    const box = $("questions");
+    box.style.display = "block"; box.innerHTML = "<h2 style='margin-bottom:0.6rem'>A few questions first</h2>";
+    const inputs = [];
+    questions.forEach((q, i) => {
+      const label = document.createElement("label");
+      label.style.cssText = "display:block;font-size:0.9rem;margin-bottom:0.15rem;color:var(--text)";
+      label.textContent = q;
+      const input = document.createElement("input");
+      input.style.cssText = "width:100%;background:#0c1414;border:1px solid #2a4444;color:var(--text);border-radius:6px;padding:0.55rem;margin-bottom:0.7rem;font-size:0.95rem";
+      input.placeholder = "your answer…";
+      box.appendChild(label); box.appendChild(input); inputs.push(input);
+    });
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:0.6rem";
+    const okBtn = document.createElement("button");
+    okBtn.textContent = "Build with these answers";
+    okBtn.style.cssText = "flex:1;background:var(--teal);color:#062a28;border:none;border-radius:8px;padding:0.7rem;font-size:1rem;font-weight:600;cursor:pointer";
+    const skipBtn = document.createElement("button");
+    skipBtn.textContent = "Skip";
+    skipBtn.style.cssText = "background:#0c1414;color:var(--dim);border:1px solid #2a4444;border-radius:8px;padding:0.7rem 1.2rem;cursor:pointer";
+    row.appendChild(okBtn); row.appendChild(skipBtn); box.appendChild(row);
+    okBtn.onclick = () => { const a = inputs.map(i => i.value.trim()); box.style.display = "none"; box.innerHTML = ""; resolve(a); };
+    skipBtn.onclick = () => { box.style.display = "none"; box.innerHTML = ""; resolve(null); };
+  });
+}
+
+async function startBuild(prompt) {
   const r = await fetch("/api/run", { method: "POST",
     headers: {"Content-Type": "application/json"}, body: JSON.stringify({prompt}) });
   const j = await r.json();
   if (j.error) { log("error: " + j.error); $("go").disabled = false; }
-};
+}
 
 // --- Three.js STL viewer (graceful if CDN fails) ---
 let renderer, scene, camera, mesh, viewerOK = false;
