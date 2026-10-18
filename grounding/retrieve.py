@@ -85,6 +85,31 @@ def ground(query: str, max_results: int = 8) -> GroundingResult:
     return result
 
 
+def _extract_hardware_terms(part_description: str) -> str:
+    """Pull out named hardware from a prompt for targeted datasheet search.
+
+    'make a tray for raspberry pi cm5' -> 'raspberry pi cm5'
+    'bracket for arduino uno' -> 'arduino uno'
+    Returns empty string if no hardware is named.
+    """
+    import re
+    desc = part_description.lower()
+    # Common board/part patterns: brand + model
+    patterns = [
+        r"raspberry pi\s+(?:compute module\s*)?(?:cm)?\d+[a-z]*",
+        r"arduino\s+\w+",
+        r"esp32[-\w]*",
+        r"teensy\s*[\d.]+",
+        r"nvidia\s+jetson\s+\w+",
+        r"beaglebone\s+\w+",
+    ]
+    for pat in patterns:
+        m = re.search(pat, desc)
+        if m:
+            return m.group(0).strip()
+    return ""
+
+
 def _load_local_references(part_description: str) -> GroundingResult:
     """Check references/ for locally-saved ground truth matching this part.
 
@@ -127,31 +152,28 @@ def _extract_ref_dimensions(data: dict, result: GroundingResult, source: str) ->
 
 
 def ground_part(part_description: str) -> GroundingResult:
-    """Ground a part: known boards first, local references, then web search.
+    """Ground a part: search for exact specs, never guess.
 
-    Priority order:
-    1. Known boards database — exact datasheet dimensions, zero search.
-    2. Local reference files (references/*.json) — confirmed measurements.
-    3. Web search — fills the gaps.
+    The invariant: when the user names hardware, the parser MUST find its
+    exact datasheet dimensions. It retains the principle (always find exact
+    specs), not a library of data. Nothing is stored, nothing goes stale.
     """
-    # Known board? Exact numbers, no search needed.
-    from grounding.known_boards import match_known_board
-    known = match_known_board(part_description)
-    if known and known.dimensions:
-        # Still check local refs for project-specific additions.
-        local = _load_local_references(part_description)
-        known.dimensions.extend(d for d in local.dimensions if d not in known.dimensions)
-        known.snippets.extend(local.snippets)
-        known.sources.extend(local.sources)
-        return known
-
-    # Local truth first.
+    # Local truth first — the user's own confirmed measurements.
     combined = _load_local_references(part_description)
 
-    queries = [
-        f"{part_description} dimensions specifications",
-        f"{part_description} technical drawing measurements",
-    ]
+    # Detect named hardware: if the prompt names a specific board or part,
+    # target datasheets and mechanical drawings, not generic dimensions.
+    hardware_terms = _extract_hardware_terms(part_description)
+    if hardware_terms:
+        queries = [
+            f"{hardware_terms} datasheet dimensions",
+            f"{hardware_terms} mechanical drawing mounting holes",
+        ]
+    else:
+        queries = [
+            f"{part_description} dimensions specifications",
+            f"{part_description} technical drawing measurements",
+        ]
     for qi, q in enumerate(queries):
         for attempt in range(3):
             r = ground(q)
