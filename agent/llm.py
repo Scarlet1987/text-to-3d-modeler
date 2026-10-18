@@ -6,6 +6,7 @@ Respects the 8GB-minimum discipline: lean context, no waste.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,16 +59,37 @@ class QwenBackend:
 
 
 def _strip_code_fences(text: str) -> str:
-    """The model may wrap code in ```python fences — strip them."""
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # drop opening fence
-        lines = lines[1:]
-        # drop closing fence
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return text.strip()
+    """Extract only the Python code, ignoring any conversational chatter.
+
+    The model sometimes thinks out loud before writing code. We find the
+    actual code by looking for the first Python import or code fence.
+    """
+    # If there's a fenced block, take it.
+    fence = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
+    if fence:
+        return fence.group(1).strip()
+    # Otherwise, find the first line that looks like Python code
+    # (import statement or assignment) and take everything from there.
+    lines = text.split("\n")
+    start = 0
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("import ") or s.startswith("from ") or s.startswith("result ="):
+            start = i
+            break
+    code = "\n".join(lines[start:]).strip()
+    # Cut off any trailing conversational text after the code ends.
+    # The code should end with the `result` definition; drop lines after
+    # the last line that looks like code.
+    code_lines = code.split("\n")
+    end = len(code_lines)
+    for i in range(len(code_lines) - 1, -1, -1):
+        s = code_lines[i].strip()
+        if s and (s.startswith("result") or s.endswith(")") or s.endswith("]") or
+                  "=" in s or s.startswith("#") or s.startswith(".")):
+            end = i + 1
+            break
+    return "\n".join(code_lines[:end]).strip()
 
 
 def make_generate_fn(backend: QwenBackend):
