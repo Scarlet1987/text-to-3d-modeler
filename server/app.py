@@ -169,6 +169,17 @@ def gather_endpoint(body: dict):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@app.get("/api/spec-visual/{spec_id}")
+def spec_visual(spec_id: str):
+    """Return an SVG technical drawing of the verified spec."""
+    from agent.visual import spec_to_svg
+    from fastapi.responses import Response
+    if spec_id not in _specs:
+        return {"error": "spec not found"}
+    svg = spec_to_svg(_specs[spec_id]["spec"])
+    return Response(content=svg, media_type="image/svg+xml")
+
+
 @app.post("/api/spec")
 def build_spec_endpoint(body: dict):
     """Build a verified spec from prompt + answers.
