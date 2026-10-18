@@ -70,7 +70,7 @@
     </div>
   </div>
 </main>
-<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<script src="/three.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const STAGE_LABELS = { preflight: "Preflight — checking resources", ground: "Grounding — researching dimensions",
@@ -123,9 +123,16 @@ $("go").onclick = async () => {
   if (j.error) { log("error: " + j.error); $("go").disabled = false; }
 };
 
-// --- Three.js STL viewer ---
-let renderer, scene, camera, mesh;
+// --- Three.js STL viewer (graceful if CDN fails) ---
+let renderer, scene, camera, mesh, viewerOK = false;
 function initViewer() {
+  if (typeof THREE === "undefined") {
+    const el = document.querySelector("#viewer .empty");
+    if (el) el.textContent = "3D preview unavailable (couldn't load Three.js) — STL download still works";
+    return;
+  }
+  try {
+    viewerOK = true;
   const el = $("viewer");
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(el.clientWidth, el.clientHeight);
@@ -145,8 +152,14 @@ function initViewer() {
   window.addEventListener("pointermove", e => { if (!drag || !mesh) return;
     ry += (e.clientX - px) * 0.01; rx += (e.clientY - py) * 0.01;
     px = e.clientX; py = e.clientY; mesh.rotation.set(rx, ry, 0); });
+  } catch (err) {
+    viewerOK = false;
+    const el2 = document.querySelector("#viewer .empty");
+    if (el2) el2.textContent = "3D preview failed to start — STL download still works";
+  }
 }
 function loadSTL(url) {
+  if (!viewerOK) return;
   fetch(url).then(r => r.arrayBuffer()).then(buf => {
     const geo = parseSTL(buf);
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
