@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# CadQuery / CAD
+*.step
+*.stp
+*.stl
+*.3mf
+*.FCStd
+
+# Models (large, fetch separately)
+*.gguf
+models/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
