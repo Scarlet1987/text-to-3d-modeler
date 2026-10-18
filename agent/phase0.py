@@ -20,6 +20,7 @@ from pathlib import Path
 
 from gates.measurements import check_measurements
 from gates.verify import verify_step
+from grounding.diagrams import parse_diagrams
 from grounding.retrieve import ground_part
 
 
@@ -80,9 +81,15 @@ class Phase0Loop:
 
     def run(self, prompt: str, workdir: Path) -> JobResult:
         # Ground first: real measurements before any generation.
+        # Text is cheap; diagrams cost download+OCR, so they run only
+        # when text comes up short — and only from trusted, relevant sources.
         grounding = ground_part(prompt)
-        reference_dims = grounding.dimensions
+        reference_dims = list(grounding.dimensions)
+        for dd in parse_diagrams(prompt, workdir, reference_dims):
+            reference_dims.extend(dd.measurements)
         context = grounding.prompt_block()
+        if reference_dims != grounding.dimensions:
+            context += "\nDiagram-sourced dimensions: " + "; ".join(reference_dims)
 
         errors: list[str] = []
         script = ""

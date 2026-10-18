@@ -1,17 +1,22 @@
-"""Diagram parsing: download technical diagrams/schematics, OCR them,
-extract measurements and keywords/phrases for accuracy.
+"""Disciplined diagram grounding.
 
-Runs BEFORE the build (to ground generation) and the extracted data
-is kept for the AFTER-build verification gate.
+Not random images — targeted technical references, validated before use.
+
+Rules:
+1. Text grounding runs first. Diagrams are fetched ONLY if text came up
+   short on measurements. Don't pay the download+OCR cost for nothing.
+2. Source priority: manufacturer datasheets and official docs outrank
+   random blog images. A wrong diagram is worse than no diagram.
+3. Relevance check: the OCR text must mention the part (or its key terms).
+   An irrelevant diagram's measurements never enter the reference set.
+4. Cap at 2 diagrams. More is noise, not signal.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
-import tempfile
 import time
-import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,11 +24,30 @@ import requests
 
 from grounding.retrieve import DIMENSION_RE, HEADERS
 
-# Stopwords for keyword extraction — keep domain terms, drop glue words.
-_STOPWORDS = {
-    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
-    "is", "are", "be", "by", "as", "at", "from", "this", "that", "it",
-}
+# Domains that publish authoritative technical data.
+TRUSTED_DOMAINS = (
+    "raspberrypi.com",
+    "pip.raspberrypi.com",
+    "datasheet",
+    "mouser.com",
+    "digikey.com",
+    "ti.com",
+    "analog.com",
+    "nxp.com",
+    "st.com",
+    "infineon.com",
+    "wikipedia.org",
+    "githubusercontent.com",  # CAD repos with drawings
+)
+
+
+def _source_score(url: str) -> int:
+    url_l = url.lower()
+    if any(d in url_l for d in TRUSTED_DOMAINS):
+        return 2
+    if url_l.endswith(".pdf"):
+        return 1  # datasheets, even from mirrors
+    return 0
 
 
 @dataclass
@@ -31,49 +55,36 @@ class DiagramData:
     source_url: str
     measurements: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
-    raw_text: str = ""
+    trusted: bool = False
 
 
-def _find_diagram_urls(query: str, max_images: int = 4) -> list[str]:
-    """Find direct image URLs of diagrams/schematics via DDG image search."""
-    urls: list[str] = []
+def _find_candidates(query: str, max_candidates: int = 6) -> list[str]:
+    """Find candidate diagram/datasheet URLs, ranked by source trust."""
+    found: list[str] = []
     try:
         resp = requests.post(
             "https://html.duckduckgo.com/html/",
-            data={"q": query + " diagram schematic technical drawing", "iax": "images", "ia": "images"},
+            data={"q": f"{query} datasheet OR technical drawing dimensions"},
             headers=HEADERS, timeout=30,
         )
-        # DDG html endpoint returns web results; image URLs often appear as direct links
-        for m in re.finditer(r'"image":"([^"]+)"', resp.text):
-            u = m.group(1)
-            if u.startswith("http"):
-                urls.append(u)
-            if len(urls) >= max_images:
+        for m in re.finditer(r'result__a[^>]*href="([^"]+)"', resp.text):
+            url = m.group(1)
+            if url.startswith("http") and url not in found:
+                found.append(url)
+            if len(found) >= max_candidates:
                 break
     except Exception:
         pass
-    # Fallback: pull image URLs from regular results pages
-    if not urls:
-        try:
-            resp = requests.get(
-                "https://duckduckgo.com/",
-                params={"q": query + " technical drawing dimensions", "iax": "images", "ia": "images"},
-                headers=HEADERS, timeout=30,
-            )
-            for m in re.finditer(r'https?://[^"\s<>]+\.(?:png|jpe?g|svg|webp|gif)', resp.text, re.I):
-                urls.append(m.group(0))
-                if len(urls) >= max_images:
-                    break
-        except Exception:
-            pass
-    return urls[:max_images]
+    # Most trusted first.
+    found.sort(key=_source_score, reverse=True)
+    return found
 
 
 def _download(url: str, dest: Path) -> bool:
     try:
         r = requests.get(url, headers=HEADERS, timeout=30)
         r.raise_for_status()
-        if len(r.content) < 1024:
+        if len(r.content) < 2048:
             return False
         dest.write_bytes(r.content)
         return True
@@ -81,10 +92,10 @@ def _download(url: str, dest: Path) -> bool:
         return False
 
 
-def _ocr(image_path: Path) -> str:
+def _ocr(path: Path) -> str:
     try:
         proc = subprocess.run(
-            ["tesseract", str(image_path), "stdout", "--psm", "6"],
+            ["tesseract", str(path), "stdout", "--psm", "6"],
             capture_output=True, text=True, timeout=120,
         )
         return proc.stdout if proc.returncode == 0 else ""
@@ -92,33 +103,53 @@ def _ocr(image_path: Path) -> str:
         return ""
 
 
-def _extract_keywords(text: str, max_keywords: int = 30) -> list[str]:
-    words = re.findall(r"[A-Za-z][A-Za-z0-9\-/]{2,}", text.lower())
-    freq: dict[str, int] = {}
-    for w in words:
-        if w not in _STOPWORDS and not w.isdigit():
-            freq[w] = freq.get(w, 0) + 1
-    ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [w for w, _ in ranked[:max_keywords]]
+def _is_relevant(text: str, query_terms: list[str]) -> bool:
+    """The diagram must mention the part. Otherwise its numbers are noise."""
+    text_l = text.lower()
+    hits = sum(1 for t in query_terms if t in text_l)
+    return hits >= max(1, len(query_terms) // 2)
 
 
-def parse_diagrams(query: str, workdir: Path, max_images: int = 3) -> list[DiagramData]:
-    """Download diagrams for a part, OCR them, extract measurements + keywords."""
+def parse_diagrams(
+    query: str,
+    workdir: Path,
+    text_measurements: list[str],
+    max_diagrams: int = 2,
+) -> list[DiagramData]:
+    """Fetch and parse diagrams — but only if text grounding came up short,
+    only from the most trusted sources, and only if relevant.
+
+    Returns validated DiagramData. Empty list means: text was enough,
+    or nothing trustworthy was found. Both are fine.
+    """
+    # Discipline rule 1: don't pay for diagrams when text already delivered.
+    if len(text_measurements) >= 5:
+        return []
+
+    query_terms = [w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2]
     results: list[DiagramData] = []
-    for i, url in enumerate(_find_diagram_urls(query, max_images)):
-        img_path = workdir / f"diagram_{i}.img"
-        if not _download(url, img_path):
+    for i, url in enumerate(_find_candidates(query)):
+        if len(results) >= max_diagrams:
+            break
+        # Skip non-image, non-PDF URLs (can't OCR a webpage usefully here).
+        if not re.search(r"\.(pdf|png|jpe?g|webp)(\?|$)", url, re.I):
+            # Allow datasheet PDFs discovered via redirect URLs too.
+            if "datasheet" not in url.lower() and ".pdf" not in url.lower():
+                continue
+        dest = workdir / f"ref_{i}.bin"
+        if not _download(url, dest):
             continue
         time.sleep(1)
-        text = _ocr(img_path)
+        text = _ocr(dest)
+        dest.unlink(missing_ok=True)  # don't hoard downloads
         if not text.strip():
             continue
-        measurements = list(dict.fromkeys(d.strip() for d in DIMENSION_RE.findall(text) if d.strip()))
-        keywords = _extract_keywords(text)
-        results.append(DiagramData(
-            source_url=url,
-            measurements=measurements,
-            keywords=keywords,
-            raw_text=text[:2000],
+        # Discipline rule 3: relevance check before trusting any number.
+        if not _is_relevant(text, query_terms):
+            continue
+        measurements = list(dict.fromkeys(
+            d.strip() for d in DIMENSION_RE.findall(text) if d.strip()
         ))
+        trusted = _source_score(url) >= 2
+        results.append(DiagramData(url, measurements, [], trusted))
     return results
