@@ -6,10 +6,12 @@ not just look right.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import urllib.parse
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import requests
 
@@ -83,13 +85,60 @@ def ground(query: str, max_results: int = 8) -> GroundingResult:
     return result
 
 
+def _load_local_references(part_description: str) -> GroundingResult:
+    """Check references/ for locally-saved ground truth matching this part.
+
+    Reference files are JSON with dimensions, specs, and measurements the
+    user has confirmed. They outrank web search — local truth beats the internet.
+    """
+    result = GroundingResult(query=part_description)
+    ref_dir = Path(__file__).resolve().parent.parent / "references"
+    if not ref_dir.exists():
+        return result
+    desc_lower = part_description.lower()
+    for ref_file in ref_dir.glob("*.json"):
+        try:
+            data = json.loads(ref_file.read_text())
+        except Exception:
+            continue
+        # Match if the reference project name or any key appears in the prompt.
+        project = str(data.get("project", "")).lower()
+        if project and project.replace("-", " ") in desc_lower:
+            _extract_ref_dimensions(data, result, ref_file.name)
+        elif "handheld" in desc_lower and "handheld" in project:
+            _extract_ref_dimensions(data, result, ref_file.name)
+    return result
+
+
+def _extract_ref_dimensions(data: dict, result: GroundingResult, source: str) -> None:
+    """Pull every millimeter value out of a reference JSON."""
+    def walk(obj, path=""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}.{k}" if path else k)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v, path)
+        elif isinstance(obj, (int, float)) and "mm" in path.lower():
+            result.dimensions.append(f"{obj}mm ({path})")
+            result.sources.append(f"local:{source}")
+    walk(data)
+    result.snippets.append(f"Local reference {source}: {json.dumps(data)[:500]}")
+
+
 def ground_part(part_description: str) -> GroundingResult:
-    """Ground a part: search for its dimensions, specs, and reference diagrams."""
+    """Ground a part: local references first, then web search.
+
+    Local reference files (references/*.json) are checked first — they're
+    confirmed measurements, not search results. Web grounding fills the gaps.
+    """
+    # Local truth first.
+    combined = _load_local_references(part_description)
+
     queries = [
         f"{part_description} dimensions specifications",
         f"{part_description} technical drawing measurements",
     ]
-    combined = GroundingResult(query=part_description)
     for qi, q in enumerate(queries):
         for attempt in range(3):
             r = ground(q)
