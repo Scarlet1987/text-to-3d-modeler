@@ -52,7 +52,13 @@
 <main>
   <div>
     <div class="card">
-      <h2>Describe your part</h2>
+      <h2>Gather data <span style="font-weight:normal;text-transform:none;letter-spacing:0">— phase 1</span></h2>
+      <input id="gather-query" placeholder="raspberry pi cm5" style="width:100%;background:#0c1414;border:1px solid #2a4444;color:var(--text);border-radius:8px;padding:0.7rem;font-size:1rem">
+      <button id="gather-btn" style="margin-top:0.6rem;background:#1a3a3a;color:var(--teal);border:1px solid #2a4444;border-radius:8px;padding:0.7rem 1.6rem;font-size:1rem;font-weight:600;cursor:pointer;width:100%">Scrape manufacturer data</button>
+      <div id="gather-results" style="display:none;margin-top:1rem;font-size:0.9rem"></div>
+    </div>
+    <div class="card" style="margin-top:1.5rem">
+      <h2>Describe your part <span style="font-weight:normal;text-transform:none;letter-spacing:0">— phase 2</span></h2>
       <textarea id="prompt" placeholder="make a 40x20x5mm bracket with a 6mm hole"></textarea>
       <button id="go">Build it</button>
       <div id="questions" style="display:none;margin-top:1rem"></div>
@@ -317,6 +323,47 @@ async function refreshRuns() {
   }
 }
 initViewer(); refreshRuns(); setStages(null);
+
+$("gather-btn").onclick = async () => {
+  const query = $("gather-query").value.trim();
+  if (!query) return;
+  const btn = $("gather-btn"), box = $("gather-results");
+  btn.disabled = true; btn.textContent = "Scraping…";
+  box.style.display = "block"; box.innerHTML = "<p style='color:var(--dim)'>searching for datasheets and diagrams…</p>";
+  try {
+    const r = await fetch("/api/gather", { method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({query}) });
+    const { data, error } = await r.json();
+    if (error) { box.innerHTML = `<p style='color:#e08080'>${error}</p>`; return; }
+    let html = "";
+    if (data.hardware) html += `<p><strong>Hardware detected:</strong> ${data.hardware}</p>`;
+    if (data.dimensions.length) {
+      html += `<p style='margin-top:0.6rem'><strong>Dimensions found (${data.dimensions.length}):</strong></p><ul style='margin:0.3rem 0 0 1.2rem'>`;
+      for (const d of data.dimensions.slice(0, 20)) html += `<li>${d}</li>`;
+      if (data.dimensions.length > 20) html += `<li style='color:var(--dim)'>…and ${data.dimensions.length - 20} more</li>`;
+      html += `</ul>`;
+    }
+    if (data.diagrams.length) {
+      html += `<p style='margin-top:0.6rem'><strong>Diagrams parsed (${data.diagrams.length}):</strong></p><ul style='margin:0.3rem 0 0 1.2rem'>`;
+      for (const dg of data.diagrams) html += `<li style='font-size:0.8rem;color:var(--dim)'>${dg.measurements.length} measurements</li>`;
+      html += `</ul>`;
+    }
+    if (data.sources.length) {
+      html += `<p style='margin-top:0.6rem;color:var(--dim);font-size:0.8rem'><strong>Sources:</strong> ${data.sources.slice(0, 5).join(", ")}</p>`;
+    }
+    if (data.notes.length) {
+      for (const n of data.notes) html += `<p style='color:#e0a080;margin-top:0.4rem'>${n}</p>`;
+    }
+    if (!data.dimensions.length && !data.diagrams.length) {
+      html += `<p style='color:#e08080'>No data found. Try a more specific name.</p>`;
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<p style='color:#e08080'>gather failed: ${e.message}</p>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Scrape manufacturer data";
+  }
+};
 
 $("update-btn").onclick = async () => {
   const btn = $("update-btn");

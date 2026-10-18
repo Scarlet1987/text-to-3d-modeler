@@ -146,6 +146,29 @@ _specs: dict[str, dict] = {}
 _spec_counter = [0]
 
 
+@app.post("/api/gather")
+def gather_endpoint(body: dict):
+    """Gather data only — scrape web, find manufacturer diagrams, return what was found.
+
+    This is Phase 1. Nothing gets built. The user reviews the gathered data,
+    then proceeds to spec/build with verified dimensions.
+    """
+    import shutil
+    import tempfile
+    from grounding.gather import gather
+
+    query = (body.get("query") or "").strip()
+    if not query:
+        return {"error": "empty query"}
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="gather_"))
+    try:
+        data = gather(query, tmpdir)
+        return {"data": data.to_dict()}
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 @app.post("/api/spec")
 def build_spec_endpoint(body: dict):
     """Build a verified spec from prompt + answers.
