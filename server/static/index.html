@@ -56,6 +56,7 @@
       <textarea id="prompt" placeholder="make a 40x20x5mm bracket with a 6mm hole"></textarea>
       <button id="go">Build it</button>
       <div id="questions" style="display:none;margin-top:1rem"></div>
+      <div id="spec-review" style="display:none;margin-top:1rem"></div>
       <ul id="stages"></ul>
       <div id="log"></div>
     </div>
@@ -139,14 +140,64 @@ $("go").onclick = async () => {
     if (questions && questions.length) {
       const answers = await askQuestions(questions);
       if (answers === null) { $("go").disabled = false; log("cancelled"); return; }
-      const enriched = prompt + "\n\nUser answers:\n" + answers.map((a, i) => `Q: ${questions[i]}\nA: ${a}`).join("\n");
-      log(`got ${answers.length} answer(s), building…`);
-      startBuild(enriched);
+      log(`got ${answers.length} answer(s), building spec…`);
+      // Build the verified spec, show it for review before cutting.
+      const spec = await buildSpec(prompt, answers);
+      if (!spec) { $("go").disabled = false; return; }
+      const confirmed = await reviewSpec(spec);
+      if (!confirmed) { $("go").disabled = false; log("spec rejected"); return; }
+      log("spec confirmed, building…");
+      startBuild(spec.spec_id);
       return;
     }
   } catch (e) { log("clarify skipped: " + e.message); }
-  startBuild(prompt);
+  // No questions: build spec directly from prompt.
+  const spec = await buildSpec(prompt, []);
+  if (!spec) { $("go").disabled = false; return; }
+  const confirmed = await reviewSpec(spec);
+  if (!confirmed) { $("go").disabled = false; log("spec rejected"); return; }
+  startBuild(spec.spec_id);
 };
+
+async function buildSpec(prompt, answers) {
+  try {
+    const r = await fetch("/api/spec", { method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt, answers}) });
+    const j = await r.json();
+    if (j.error) { log("spec error: " + j.error); return null; }
+    return j;
+  } catch (e) { log("spec failed: " + e.message); return null; }
+}
+
+function reviewSpec({spec_id, spec}) {
+  return new Promise(resolve => {
+    const box = $("spec-review");
+    box.style.display = "block";
+    let html = `<h2 style='margin-bottom:0.6rem'>Verify spec — ${spec.part_name || "part"}</h2>`;
+    html += `<div style='font-size:0.9rem;margin-bottom:0.8rem'>`;
+    if (!spec.dimensions.length) {
+      html += `<p style='color:#e08080'>No verified dimensions found. The writer will have nothing to work with.</p>`;
+    } else {
+      html += `<table style='width:100%;border-collapse:collapse;font-size:0.85rem'>`;
+      html += `<tr style='color:var(--dim);text-align:left'><th style='padding:0.3rem'>Dimension</th><th style='padding:0.3rem'>Value</th><th style='padding:0.3rem'>Source</th></tr>`;
+      for (const d of spec.dimensions) {
+        const mark = d.verified ? "✓" : "✗";
+        const color = d.verified ? "var(--teal)" : "#e08080";
+        html += `<tr><td style='padding:0.3rem'>${d.label}</td><td style='padding:0.3rem;color:${color}'>${mark} ${d.value_mm}mm</td><td style='padding:0.3rem;color:var(--dim);font-size:0.8rem'>${d.source}</td></tr>`;
+      }
+      html += `</table>`;
+    }
+    html += `</div>`;
+    html += `<div style='display:flex;gap:0.6rem'>`;
+    html += `<button id='spec-ok' style='flex:1;background:var(--teal);color:#062a28;border:none;border-radius:8px;padding:0.7rem;font-size:1rem;font-weight:600;cursor:pointer'>Cut it</button>`;
+    html += `<button id='spec-no' style='background:#0c1414;color:var(--dim);border:1px solid #2a4444;border-radius:8px;padding:0.7rem 1.2rem;cursor:pointer'>Reject</button>`;
+    html += `</div>`;
+    box.innerHTML = html;
+    $("spec-ok").onclick = () => { box.style.display = "none"; box.innerHTML = ""; resolve(spec_id); };
+    $("spec-no").onclick = () => { box.style.display = "none"; box.innerHTML = ""; resolve(null); };
+  });
+}
 
 function askQuestions(questions) {
   return new Promise(resolve => {
@@ -176,9 +227,9 @@ function askQuestions(questions) {
   });
 }
 
-async function startBuild(prompt) {
+async function startBuild(spec_id) {
   const r = await fetch("/api/run", { method: "POST",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify({prompt}) });
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({spec_id}) });
   const j = await r.json();
   if (j.error) { log("error: " + j.error); $("go").disabled = false; }
 }

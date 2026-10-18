@@ -47,7 +47,7 @@ class GuiProgress(Progress):
         _emit("progress", entry)
 
 
-def _run_loop(prompt: str) -> None:
+def _run_loop(prompt: str, spec_id: str | None = None) -> None:
     try:
         _state["status"] = "running"
         _emit("status", {"status": "running"})
@@ -57,7 +57,11 @@ def _run_loop(prompt: str) -> None:
             raise RuntimeError("; ".join(result.problems))
         _emit("progress", {"stage": "preflight", "detail": "ok"})
 
-        run = new_run(prompt)
+        # Use the original user prompt for the run slug, not the spec block.
+        slug_prompt = prompt
+        if spec_id and spec_id in _specs:
+            slug_prompt = _specs[spec_id]["prompt"]
+        run = new_run(slug_prompt)
         _state["run"] = run
         _emit("progress", {"stage": "run", "detail": run.slug})
 
@@ -67,6 +71,7 @@ def _run_loop(prompt: str) -> None:
             generate_fn = _stub_generate
 
         loop = Phase0Loop(generate_fn=generate_fn)
+        # prompt here is the verified spec block — the ONLY context the writer sees.
         result = loop.run(prompt, run.dir, on_stage=lambda s, d="": _emit(
             "progress", {"stage": s, "detail": d}))
 
@@ -136,6 +141,37 @@ def clarify(body: dict):
     return {"questions": []}
 
 
+# Specs awaiting user verification, keyed by id.
+_specs: dict[str, dict] = {}
+_spec_counter = [0]
+
+
+@app.post("/api/spec")
+def build_spec_endpoint(body: dict):
+    """Build a verified spec from prompt + answers.
+
+    Returns the spec for user review. The CAD writer only sees the spec
+    after the user confirms it — never raw unverified dimensions.
+    """
+    from agent.spec import build_spec
+    from grounding.retrieve import ground_part
+
+    prompt = (body.get("prompt") or "").strip()
+    answers = body.get("answers") or []
+    if not prompt:
+        return {"error": "empty prompt"}
+
+    # Ground to get reference dimensions for verification.
+    grounding = ground_part(prompt)
+    spec = build_spec(prompt, answers, grounding.dimensions)
+
+    _spec_counter[0] += 1
+    spec_id = f"spec_{_spec_counter[0]}"
+    _specs[spec_id] = {"spec": spec, "prompt": prompt, "answers": answers}
+
+    return {"spec_id": spec_id, "spec": spec.to_dict()}
+
+
 @app.post("/api/update")
 def update_server():
     """Pull latest code and restart. The run.sh wrapper handles the restart."""
@@ -165,16 +201,21 @@ def events():
 
 @app.post("/api/run")
 def start_run(body: dict):
-    prompt = (body.get("prompt") or "").strip()
-    if not prompt:
-        return {"error": "empty prompt"}
+    spec_id = body.get("spec_id")
+    if not spec_id or spec_id not in _specs:
+        return {"error": "no verified spec — build a spec first"}
     if _state["status"] == "running":
         return {"error": "a run is already in progress"}
+    entry = _specs[spec_id]
+    spec = entry["spec"]
+    # The writer gets ONLY the verified spec. Nothing else.
+    prompt = spec.prompt_block()
     _state["log"] = []
     _state["status"] = "running"
-    t = threading.Thread(target=_run_loop, args=(prompt,), daemon=True)
+    _state["spec_id"] = spec_id
+    t = threading.Thread(target=_run_loop, args=(prompt, spec_id), daemon=True)
     t.start()
-    return {"started": True}
+    return {"started": True, "spec_id": spec_id}
 
 
 @app.get("/api/status")
