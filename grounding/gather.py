@@ -35,6 +35,34 @@ class GatheredData:
         }
 
 
+def _try_manufacturer_urls(hardware: str) -> GatheredData | None:
+    """Try known manufacturer documentation URL patterns.
+
+    Not a library of data — just knowledge of where manufacturers publish.
+    If the URL exists, parse it. If not, move on.
+    """
+    # Manufacturer -> URL pattern templates for datasheets.
+    # These are locations, not data. The data comes from the live document.
+    patterns = {
+        "raspberry pi": [
+            "https://datasheets.raspberrypi.com/{model}/{model}-datasheet.pdf",
+            "https://pip-assets.raspberrypi.com/categories/944-raspberry-pi-compute-module-5/documents/RP-008180-DS-7-cm5-datasheet.pdf",
+        ],
+    }
+    hw = hardware.lower()
+    for brand, urls in patterns.items():
+        if brand in hw:
+            # Extract model: "raspberry pi cm5" -> "cm5"
+            model = hw.replace(brand, "").strip().replace(" ", "-")
+            for template in urls:
+                url = template.format(model=model)
+                try:
+                    return gather_from_url(url)
+                except Exception:
+                    continue
+    return None
+
+
 def gather_from_url(url: str) -> GatheredData:
     """Gather data directly from a datasheet URL.
 
@@ -123,9 +151,12 @@ def gather(query: str, workdir: Path | None = None) -> GatheredData:
 
     # Step 1: Web search for specs and dimensions.
     search_terms = data.hardware if data.hardware else query
+    search_ok = False
     for suffix in ["datasheet dimensions", "mechanical drawing specifications"]:
         try:
             r = ground(f"{search_terms} {suffix}")
+            if r.dimensions or r.snippets:
+                search_ok = True
             for d in r.dimensions:
                 if d not in data.dimensions:
                     data.dimensions.append(d)
@@ -133,13 +164,25 @@ def gather(query: str, workdir: Path | None = None) -> GatheredData:
                 if s not in data.sources:
                     data.sources.append(s)
             for snip in r.snippets[:3]:
-                # Pull dimension-like strings from snippets.
                 for m in re.finditer(r"\d+(?:\.\d+)?\s*mm", snip):
                     dim = m.group(0)
                     if dim not in data.dimensions:
                         data.dimensions.append(dim)
         except Exception as e:
             data.notes.append(f"search failed for '{suffix}': {e}")
+
+    # Step 1b: If search failed but we know the hardware, try manufacturer
+    # documentation URL patterns directly.
+    if not search_ok and data.hardware:
+        mfr_data = _try_manufacturer_urls(data.hardware)
+        if mfr_data:
+            for d in mfr_data.dimensions:
+                if d not in data.dimensions:
+                    data.dimensions.append(d)
+            for s in mfr_data.sources:
+                if s not in data.sources:
+                    data.sources.append(s)
+            data.notes.extend(mfr_data.notes)
 
     # Step 2: Manufacturer diagrams — download and parse.
     if workdir:
