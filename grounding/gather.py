@@ -149,33 +149,11 @@ def gather(query: str, workdir: Path | None = None) -> GatheredData:
     data = GatheredData(query=query)
     data.hardware = _extract_hardware_terms(query)
 
-    # Step 1: Web search for specs and dimensions.
-    search_terms = data.hardware if data.hardware else query
-    search_ok = False
-    for suffix in ["datasheet dimensions", "mechanical drawing specifications"]:
-        try:
-            r = ground(f"{search_terms} {suffix}")
-            if r.dimensions or r.snippets:
-                search_ok = True
-            for d in r.dimensions:
-                if d not in data.dimensions:
-                    data.dimensions.append(d)
-            for s in r.sources:
-                if s not in data.sources:
-                    data.sources.append(s)
-            for snip in r.snippets[:3]:
-                for m in re.finditer(r"\d+(?:\.\d+)?\s*mm", snip):
-                    dim = m.group(0)
-                    if dim not in data.dimensions:
-                        data.dimensions.append(dim)
-        except Exception as e:
-            data.notes.append(f"search failed for '{suffix}': {e}")
-
-    # Step 1b: If search failed but we know the hardware, try manufacturer
-    # documentation URL patterns directly.
-    if not search_ok and data.hardware:
+    # Step 1: Manufacturer URLs first — direct fetch, never blocked.
+    # If we know the hardware, go straight to the source.
+    if data.hardware:
         mfr_data = _try_manufacturer_urls(data.hardware)
-        if mfr_data:
+        if mfr_data and (mfr_data.dimensions or mfr_data.diagrams):
             for d in mfr_data.dimensions:
                 if d not in data.dimensions:
                     data.dimensions.append(d)
@@ -183,6 +161,33 @@ def gather(query: str, workdir: Path | None = None) -> GatheredData:
                 if s not in data.sources:
                     data.sources.append(s)
             data.notes.extend(mfr_data.notes)
+            data.diagrams.extend(mfr_data.diagrams)
+            # Got manufacturer data — web search is now just a supplement.
+    search_terms = data.hardware if data.hardware else query
+    search_ok = bool(data.dimensions)
+    # Step 1b: Web search supplements manufacturer data (best effort).
+    # Only runs if manufacturer fetch didn't already succeed.
+    # DuckDuckGo intermittently blocks automated searches, so this is
+    # opportunistic, not required.
+    if not search_ok:
+        for suffix in ["datasheet dimensions", "mechanical drawing specifications"]:
+            try:
+                r = ground(f"{search_terms} {suffix}")
+                if r.dimensions or r.snippets:
+                    search_ok = True
+                for d in r.dimensions:
+                    if d not in data.dimensions:
+                        data.dimensions.append(d)
+                for s in r.sources:
+                    if s not in data.sources:
+                        data.sources.append(s)
+                for snip in r.snippets[:3]:
+                    for m in re.finditer(r"\d+(?:\.\d+)?\s*mm", snip):
+                        dim = m.group(0)
+                        if dim not in data.dimensions:
+                            data.dimensions.append(dim)
+            except Exception as e:
+                data.notes.append(f"search failed for '{suffix}': {e}")
 
     # Step 2: Manufacturer diagrams — download and parse.
     if workdir:
