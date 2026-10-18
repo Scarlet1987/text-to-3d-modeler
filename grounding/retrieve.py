@@ -111,7 +111,7 @@ def _extract_hardware_terms(part_description: str) -> str:
     desc = part_description.lower()
     # Common board/part patterns: brand + model
     patterns = [
-        r"raspb?erry pi\s+(?:compute module\s*)?(?:cm)?\d+[a-z]*",
+        r"rasp?berry pi\s+(?:compute module\s*)?(?:cm)?\d+[a-z]*",
         r"arduino\s+\w+",
         r"esp32[-\w]*",
         r"teensy\s*[\d.]+",
