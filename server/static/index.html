@@ -67,6 +67,7 @@
         <a id="dl-stl" href="#">Download STL</a>
         <a id="dl-step" href="#">Download STEP</a>
       </div>
+      <div id="measured" style="margin-top:0.8rem;font-size:0.85rem;color:var(--dim);display:none"></div>
     </div>
   </div>
 </main>
@@ -103,6 +104,12 @@ es.addEventListener("done", e => {
   $("go").disabled = false;
   $("dl-stl").href = d.stl; $("dl-step").href = d.step;
   $("downloads").style.display = "flex";
+  if (d.measured && Object.keys(d.measured).length) {
+    const m = d.measured;
+    $("measured").style.display = "block";
+    $("measured").textContent = "measured: " + Object.entries(m).map(([k,v]) => `${k}: ${v}`).join(" · ");
+    log("measured dimensions: " + JSON.stringify(m));
+  }
   loadSTL(d.stl); refreshRuns();
 });
 es.addEventListener("failed", e => {

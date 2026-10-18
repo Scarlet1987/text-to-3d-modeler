@@ -30,6 +30,7 @@ class JobResult:
     script: str = ""
     attempts: int = 0
     errors: list[str] = field(default_factory=list)
+    measured: dict = field(default_factory=dict)
 
 
 SYSTEM_PROMPT = """You write CadQuery (Python) scripts that generate 3D parts.
@@ -160,7 +161,8 @@ class Phase0Loop:
                     )
                     previous_script = script
                     continue
-                return JobResult(True, step_path, script, attempt, errors)
+                return JobResult(True, step_path, script, attempt, errors,
+                                 measured=v.measured)
             errors.append(f"--- attempt {attempt} ---\n{log.strip()[-2000:]}")
             previous_script = script
         return JobResult(False, None, script, self.max_attempts, errors)

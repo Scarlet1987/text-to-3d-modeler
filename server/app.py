@@ -82,6 +82,7 @@ def _run_loop(prompt: str) -> None:
                 "attempts": result.attempts,
                 "stl": f"/runs/{done.slug}/stl/part.stl",
                 "step": f"/runs/{done.slug}/step/part.step",
+                "measured": result.measured,
             })
         else:
             _state["status"] = "failed"
