@@ -44,6 +44,10 @@ class ResourceConfig:
     min_ram_mb: float = 512
     min_disk_mb: float = 256
     min_vram_mb: float | None = None  # set when GPU model required
+    # HARD CEILING (Elaina, 2026-10-19): the modeler must run within 8GB VRAM
+    # on the RX 580 baseline. Nothing — model weights, KV cache, overhead —
+    # may exceed this. It is enforced, not suggested.
+    hard_vram_ceiling_mb: float = 8192
 
 
 @dataclass

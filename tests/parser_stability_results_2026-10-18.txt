@@ -1,0 +1,19 @@
+datasheet: 94554 chars
+
+=== REGEX (current) ===
+  time: 0.0s | total: 28 | hits: 8/9 (89%) | noise: 20 (71%)
+  missing: ['2.7']
+
+=== 1.7B MODEL (3 runs) ===
+  run 1: 305.8s | total: 5 | hits: 0/9 (0%) | noise: 3 (60%)
+    missing: ['55', '1.24', '3.5', '1.5', '2.2', '4.7', '4.0', '40', '2.7']
+  run 2: 283.7s | total: 0 | hits: 0/9 (0%) | noise: 0 (0%)
+    missing: ['55', '3.5', '1.24', '2.2', '1.5', '4.7', '4.0', '40', '2.7']
+  run 3: 272.7s | total: 0 | hits: 0/9 (0%) | noise: 0 (0%)
+    missing: ['55', '3.5', '1.24', '2.2', '1.5', '4.7', '4.0', '40', '2.7']
+
+  consistency across runs: 0% (0/3 dims in all runs)
+
+=== VERDICT ===
+Compare hit_rate, noise_rate, and consistency above.
+Model wins if: higher hit_rate AND lower noise_rate AND consistency > 80%.
